@@ -4,6 +4,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import nmap
 import requests
+from get_ip import get_ip
 
 # 常见的端口及其作用（中文说明）
 common_ports = {
@@ -132,7 +133,9 @@ if __name__ == "__main__":
     max_threads = args.threads
 
     print(f"正在扫描 {host} 的端口范围 {start_port} 到 {end_port}，使用 {max_threads} 个线程...")
-    open_ports = scan_ports(host, start_port, end_port, max_threads)
-    save_to_file(open_ports)
+    ip = get_ip(host)
+    print(f"IP 地址: {ip}")
+    if not ip:
+        sys.exit(1)
+    open_ports = scan_ports(ip, start_port, end_port, max_threads)
     display_results(open_ports)
-    print("结果已保存到 port_scan_results.txt")

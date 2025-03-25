@@ -1,4 +1,5 @@
 import socket
+import ssl
 import sys
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -29,6 +30,47 @@ def get_iana_service_name(port):
     except requests.RequestException:
         return None
 
+def get_http_header(host, port):
+    """发送 HTTP 请求并返回响应头"""
+    try:
+        # 创建一个 socket 连接
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(3)
+
+        # 如果是 HTTPS，使用 SSL 包装 socket
+        if port == 443:
+            context = ssl.create_default_context()
+            context.check_hostname = False  # 禁用主机名检查
+            context.verify_mode = ssl.CERT_NONE  # 禁用证书验证
+            sock = context.wrap_socket(sock, server_hostname=host)
+
+        # 连接到目标主机和端口
+        sock.connect((host, port))
+
+        # 构造 HTTP 请求
+        #request = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        request = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n\r\n"
+        sock.sendall(request.encode())
+
+        # 接收响应
+        response = b""
+        while True:
+            data = sock.recv(1024)
+            if not data:
+                break
+            response += data
+
+        # 关闭连接
+        sock.close()
+
+        # 解码响应并获取头部信息
+        response = response.decode('utf-8', errors='ignore')
+        headers = response.split("\r\n\r\n")[0]  # 获取 HTTP 头部部分
+        return headers
+
+    except Exception as e:
+        return f"错误: {str(e)}"
+
 def scan_port_with_nmap(host, port):
     """使用 nmap 获取端口的详细信息"""
     nm = nmap.PortScanner()
@@ -45,15 +87,7 @@ def scan_port_with_nmap(host, port):
 
                 # 如果服务是 http/https，尝试获取 HTTP 头信息
                 if service in ['http', 'https']:
-                    url = f"{service}://{host}:{port}"
-                    headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                    }
-                    try:
-                        response = requests.get(url, headers=headers, timeout=3)
-                        additional_info = f"HTTP/{response.raw.version / 10} {response.status_code} {response.reason}"
-                    except requests.RequestException:
-                        additional_info = "无法获取 HTTP 详细信息"
+                    additional_info = get_http_header(host, port)
 
     return service, additional_info
 

@@ -58,7 +58,8 @@ def scan_port(host, port):
     result = sock.connect_ex((host, port))
     if result == 0:
         # 获取端口服务名称
-        service = common_ports.get(port)
+        # service = common_ports.get(port)
+        service = None
         if not service:
             service = get_service_name(port)
             if not service:

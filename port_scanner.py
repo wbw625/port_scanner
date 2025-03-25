@@ -6,21 +6,8 @@ import nmap
 import requests
 from get_ip import get_ip
 
-# 常见的端口及其作用（中文说明）
-common_ports = {
-    21: "FTP（文件传输协议）",
-    22: "SSH（安全外壳协议）",
-    23: "Telnet（远程登录协议）",
-    25: "SMTP（简单邮件传输协议）",
-    53: "DNS（域名系统）",
-    80: "HTTP（超文本传输协议）",
-    110: "POP3（邮局协议版本3）",
-    143: "IMAP（互联网消息访问协议）",
-    443: "HTTPS（安全的超文本传输协议）",
-    3306: "MySQL 数据库",
-    3389: "RDP（远程桌面协议）",
-    8080: "HTTP-Alt（备用HTTP端口）"
-}
+common_ports = [21, 22, 80, 81, 135, 139, 443, 445, 1433, 1521, 3306, 5432, 6379, 7001, 8000, 8080, 8089, 9000, 9200, 11211, 27017]
+
 
 def get_service_name(port):
     """尝试从系统数据库获取端口的服务名称"""
@@ -44,12 +31,31 @@ def get_iana_service_name(port):
 
 def scan_port_with_nmap(host, port):
     """使用 nmap 获取端口的详细信息"""
-    scanner = nmap.PortScanner()
-    scanner.scan(host, str(port))
-    if host in scanner.all_hosts():
-        service = scanner[host]['tcp'][port]['name']
-        return f"nmap 扫描结果: {service}"
-    return None
+    nm = nmap.PortScanner()
+    # service_info = {}
+
+    nm.scan(ip, str(port), '-sV')
+
+    for host in nm.all_hosts():
+        lport = nm[host]['tcp'].keys()
+        for port in lport:
+            if nm[host]['tcp'][port]['state'] == 'open':
+                service = nm[host]['tcp'][port]['name']
+                additional_info = nm[host]['tcp'][port].get('extrainfo')
+
+                # 如果服务是 http/https，尝试获取 HTTP 头信息
+                if service in ['http', 'https']:
+                    url = f"{service}://{host}:{port}"
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    }
+                    try:
+                        response = requests.get(url, headers=headers, timeout=3)
+                        additional_info = f"HTTP/{response.raw.version / 10} {response.status_code} {response.reason}"
+                    except requests.RequestException:
+                        additional_info = "无法获取 HTTP 详细信息"
+
+    return service, additional_info
 
 def scan_port(host, port):
     """扫描单个端口"""
@@ -57,20 +63,20 @@ def scan_port(host, port):
     sock.settimeout(0.5)
     result = sock.connect_ex((host, port))
     if result == 0:
-        # 获取端口服务名称
-        # service = common_ports.get(port)
+        # 获取端口服务名称和额外信息
         service = None
+        additional_info = None
         if not service:
-            service = get_service_name(port)
+            service, additional_info = scan_port_with_nmap(host, port)
             if not service:
-                service = scan_port_with_nmap(host, port)
+                service = get_service_name(port)
                 if not service:
                     iana_info = get_iana_service_name(port)
                     if iana_info:
                         service = iana_info
                     else:
                         service = "未知"
-        return port, service
+        return port, service, additional_info
     sock.close()
     return None
 
@@ -89,12 +95,14 @@ def scan_ports(host, start_port=1, end_port=1024, max_threads=100):
             scanned_ports += 1
             port = futures[future]
             progress = (scanned_ports / total_ports) * 100
-            print(f"\r正在扫描端口 {port}... 进度: {progress:.2f}%", end="")
+            print(f"\r--正在扫描端口 {port}... 进度: {progress:.2f}%", end="")
+
             result = future.result()
             if result:
-                port, service = result
-                open_ports.append((port, service))
-                print(f"\n端口 {port} 已打开 - {service}")
+                port, service, additional_info = result
+                open_ports.append((port, service, additional_info))
+                print(f"\n----端口 {port} 已打开服务 - {service}")
+
     print("\n扫描完成。")
     return open_ports
 
@@ -102,7 +110,7 @@ def save_to_file(open_ports, filename="port_scan_results.txt"):
     """保存扫描结果到文件"""
     with open(filename, "a") as file:
         for port, service in open_ports:
-            file.write(f"端口 {port} 已打开 - {service}\n")
+            file.write(f"--端口 {port} 已打开 - {service}\n")
 
 def display_results(open_ports):
     """显示扫描结果并解释端口作用"""
@@ -110,13 +118,17 @@ def display_results(open_ports):
         print("未找到打开的端口。")
         return
 
-    print("\n扫描结果：")
+    print(f"\n对 {ip} 的扫描结果：")
     print("-" * 50)
-    for port, service in open_ports:
+    for port, service, additional_info in open_ports:
         if service == "未知":
             print(f"端口 {port}: 未知（此端口可能用于自定义或不常见的服务，建议进一步调查。）")
         else:
-            print(f"端口 {port}: {service}")
+            if additional_info == None or additional_info == "":
+                print(f"端口 {port}: {service}")
+            else:
+                print(f"端口 {port}: {service}, {additional_info}")
+
     print("-" * 50)
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import socket
+import ssl
 import sys
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -29,12 +30,62 @@ def get_iana_service_name(port):
     except requests.RequestException:
         return None
 
+def get_http_header(host, port):
+    """发送 HTTP 请求并返回响应头"""
+    try:
+        # 创建一个 socket 连接
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+
+        # 如果是 HTTPS，使用 SSL 包装 socket
+        if port == 443:
+            context = ssl.create_default_context()
+            context.check_hostname = False  # 禁用主机名检查
+            context.verify_mode = ssl.CERT_NONE  # 禁用证书验证
+            sock = context.wrap_socket(sock, server_hostname=host)
+
+        # 连接到目标主机和端口
+        sock.connect((host, port))
+
+        # 构造 HTTP 请求
+        #request = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        request = (
+            "GET / HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n"
+            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n"
+            "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8\r\n"
+            "Accept-Encoding: gzip, deflate, br\r\n"  # 允许压缩响应
+            "Connection: close\r\n\r\n"
+        )
+        sock.sendall(request.encode())
+
+        # 接收响应
+        response = b""
+        while True:
+            data = sock.recv(1024)
+            if not data:
+                break
+            response += data
+
+        # 关闭连接
+        sock.close()
+
+        # 解码响应并获取头部信息
+        response = response.decode('utf-8', errors='ignore')
+        headers = response.split("\r\n\r\n")[0]  # 获取 HTTP 头部部分
+        
+        return headers
+
+    except Exception as e:
+        return f"错误: {str(e)}"
+
 def scan_port_with_nmap(host, port):
     """使用 nmap 获取端口的详细信息"""
     nm = nmap.PortScanner()
     # service_info = {}
 
-    nm.scan(ip, str(port), '-sV')
+    nm.scan(ip, str(port), arguments='-sV --script ssl-enum-ciphers')
 
     for host in nm.all_hosts():
         lport = nm[host]['tcp'].keys()
@@ -44,43 +95,40 @@ def scan_port_with_nmap(host, port):
                 additional_info = nm[host]['tcp'][port].get('extrainfo')
 
                 # 如果服务是 http/https，尝试获取 HTTP 头信息
-                if service in ['http', 'https']:
-                    url = f"{service}://{host}:{port}"
-                    headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                    }
-                    try:
-                        response = requests.get(url, headers=headers, timeout=3)
-                        additional_info = f"HTTP/{response.raw.version / 10} {response.status_code} {response.reason}"
-                    except requests.RequestException:
-                        additional_info = "无法获取 HTTP 详细信息"
+                if service in ['http', 'http-proxy', 'https']:
+                    additional_info = get_http_header(host, port)
 
     return service, additional_info
 
-def scan_port(host, port):
+def scan_port(host, port, original_host):
     """扫描单个端口"""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(0.5)
     result = sock.connect_ex((host, port))
+
     if result == 0:
         # 获取端口服务名称和额外信息
         service = None
         additional_info = None
         if not service:
-            service, additional_info = scan_port_with_nmap(host, port)
+            service = get_service_name(port)
             if not service:
-                service = get_service_name(port)
+                service, additional_info = scan_port_with_nmap(host, port)
                 if not service:
                     iana_info = get_iana_service_name(port)
                     if iana_info:
                         service = iana_info
                     else:
                         service = "未知"
+                        
+        if service in ['http', 'https']:
+            # 使用原始域名而非 IP 地址
+            additional_info = get_http_header(original_host, port)
         return port, service, additional_info
     sock.close()
     return None
 
-def scan_ports(host, start_port=1, end_port=1024, max_threads=100):
+def scan_ports(host, original_host, start_port=1, end_port=1024, max_threads=100):
     """多线程扫描端口"""
     open_ports = []
     total_ports = end_port - start_port + 1
@@ -88,7 +136,7 @@ def scan_ports(host, start_port=1, end_port=1024, max_threads=100):
 
     with ThreadPoolExecutor(max_workers=max_threads) as executor:
         futures = {
-            executor.submit(scan_port, host, port): port
+            executor.submit(scan_port, host, port, original_host): port
             for port in range(start_port, end_port + 1)
         }
         for future in as_completed(futures):
@@ -122,12 +170,12 @@ def display_results(open_ports):
     print("-" * 50)
     for port, service, additional_info in open_ports:
         if service == "未知":
-            print(f"端口 {port}: 未知（此端口可能用于自定义或不常见的服务，建议进一步调查。）")
+            print(f"--端口 {port}: 未知（此端口可能用于自定义或不常见的服务，建议进一步调查。）")
         else:
             if additional_info == None or additional_info == "":
-                print(f"端口 {port}: {service}")
+                print(f"--端口 {port}: {service}")
             else:
-                print(f"端口 {port}: {service}, {additional_info}")
+                print(f"--端口 {port}: {service} \n----额外信息:\n{additional_info}")
 
     print("-" * 50)
 
@@ -150,5 +198,5 @@ if __name__ == "__main__":
     print(f"IP 地址: {ip}")
     if not ip:
         sys.exit(1)
-    open_ports = scan_ports(ip, start_port, end_port, max_threads)
+    open_ports = scan_ports(ip, host, start_port, end_port, max_threads)
     display_results(open_ports)

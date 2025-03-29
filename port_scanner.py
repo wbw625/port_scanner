@@ -80,6 +80,30 @@ def get_http_header(host, port):
     except Exception as e:
         return f"错误: {str(e)}"
 
+def get_ssh_banner(host, port=22):
+    """获取 SSH 端口的 Banner 信息"""
+    try:
+        # 创建 socket 连接
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+
+        # 连接到目标端口
+        sock.connect((host, port))
+
+        # 读取 SSH Banner
+        banner = sock.recv(1024).decode('utf-8', errors='ignore')
+
+        # 关闭连接
+        sock.close()
+
+        if banner.startswith("SSH-"):
+            return banner.strip()
+        return "无法识别的 SSH 服务"
+
+    except Exception as e:
+        return f"无法获取 SSH 信息: {str(e)}"
+
+
 def scan_port_with_nmap(host, port):
     """使用 nmap 获取端口的详细信息"""
     nm = nmap.PortScanner()
@@ -97,6 +121,10 @@ def scan_port_with_nmap(host, port):
                 # 如果服务是 http/https，尝试获取 HTTP 头信息
                 if service in ['http', 'http-proxy', 'https']:
                     additional_info = get_http_header(host, port)
+
+                # 处理 SSH 服务的特殊端口
+                if port == 'ssh':
+                    additional_info = get_ssh_banner(host, port)
 
     return service, additional_info
 
@@ -124,6 +152,10 @@ def scan_port(host, port, original_host):
         if service in ['http', 'https']:
             # 使用原始域名而非 IP 地址
             additional_info = get_http_header(original_host, port)
+
+        elif service == 'ssh':
+            additional_info = get_ssh_banner(host, port)
+            
         return port, service, additional_info
     sock.close()
     return None

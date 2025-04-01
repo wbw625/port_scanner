@@ -3,7 +3,7 @@ import ssl
 import sys
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import nmap
+from get_ports import get_ports
 import requests
 from get_ip import get_ip
 
@@ -135,13 +135,14 @@ def scan_port(host, port, original_host):
 def scan_ports(host, original_host, start_port=1, end_port=1024, max_threads=100):
     """多线程扫描端口"""
     open_ports = []
-    total_ports = end_port - start_port + 1
+    get_open_ports = get_ports(host)
+    total_ports = len(open_ports)
     scanned_ports = 0
 
     with ThreadPoolExecutor(max_workers=max_threads) as executor:
         futures = {
             executor.submit(scan_port, host, port, original_host): port
-            for port in range(start_port, end_port + 1)
+            for port in get_open_ports
         }
         for future in as_completed(futures):
             scanned_ports += 1

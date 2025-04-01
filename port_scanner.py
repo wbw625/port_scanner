@@ -7,48 +7,79 @@ import nmap
 import requests
 from get_ip import get_ip
 
-common_ports = [21, 22, 80, 81, 135, 139, 443, 445, 1433, 1521, 3306, 5432, 6379, 7001, 8000, 8080, 8089, 9000, 9200, 11211, 27017]
+common_ports = [21, 22, 23, 25, 53, 80, 81, 110, 135, 139, 443, 445, 1433, 1521, 3306, 5432, 6379, 7001, 8000, 8080, 8089, 9000, 9200, 11211, 27017]
 
+common_services = {
+    21: "FTP (File Transfer Protocol)",
+    22: "SSH (Secure Shell)",
+    23: "Telnet",
+    25: "SMTP (Simple Mail Transfer Protocol)",
+    53: "DNS (Domain Name System)",
+    80: "HTTP (Hypertext Transfer Protocol)",
+    110: "POP3 (Post Office Protocol)",
+    143: "IMAP (Internet Message Access Protocol)",
+    443: "HTTPS (HTTP Secure)",
+    3306: "MySQL Database",
+    5432: "PostgreSQL Database",
+    6379: "Redis",
+    9200: "Elasticsearch",
+    11211: "Memcached",
+    27017: "MongoDB",
+}
 
-def get_service_name(port):
-    """尝试从系统数据库获取端口的服务名称"""
+def socket_get_banner(host, port):
+    """获取指定端口的 Banner 信息"""
     try:
-        return socket.getservbyport(port)
-    except (OSError, socket.error):
-        return None
+        # 创建 socket 连接
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
 
-def get_iana_service_name(port):
-    """从 IANA 端口注册表查询端口信息"""
-    url = f"https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml?search={port}"
-    try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            # 解析 HTML 页面（这里简单判断是否包含端口信息）
-            if f"Port {port}" in response.text:
-                return f"详细信息请访问: {url}"
-        return None
-    except requests.RequestException:
-        return None
+        # 连接到目标主机和端口
+        sock.connect((host, port))
+
+        # 接收数据
+        banner = sock.recv(1024).decode('utf-8', errors='ignore')
+
+        # 关闭连接
+        sock.close()
+
+        return banner.strip()
+
+    except Exception as e:
+        return f"错误: {str(e)}"
+
+def scan_service_banner(ip: str, port: int) -> dict[int, str]:
+    """扫描指定 IP 地址的端口并返回结果"""
+    service_banner = socket_get_banner(ip, port)
+    if service_banner:
+        if service_banner.startswith("SSH-"):
+            service = "SSH"
+        elif service_banner.startswith("220"):
+            service = "SMTP"
+        else:
+            service = "未知"
+
+        print(f"端口 {port} ({service}): {service_banner}")
+    return (service, service_banner)
+
 
 def get_http_header(host, port):
     """发送 HTTP 请求并返回响应头"""
     try:
         # 创建一个 socket 连接
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5)
+        sock.settimeout(20)
 
-        # 如果是 HTTPS，使用 SSL 包装 socket
-        if port == 443:
-            context = ssl.create_default_context()
-            context.check_hostname = False  # 禁用主机名检查
-            context.verify_mode = ssl.CERT_NONE  # 禁用证书验证
-            sock = context.wrap_socket(sock, server_hostname=host)
-
+        # 使用 SSL/TLS 包装 socket
+        context = ssl.create_default_context()
+        context.check_hostname = False  # 禁用主机名检查
+        context.verify_mode = ssl.CERT_NONE  # 禁用证书验证
+        sock = context.wrap_socket(sock, server_hostname=host)
+        
         # 连接到目标主机和端口
         sock.connect((host, port))
 
-        # 构造 HTTP 请求
-        #request = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        # 构造 HTTPS 请求
         request = (
             "GET / HTTP/1.1\r\n"
             f"Host: {host}\r\n"
@@ -58,7 +89,6 @@ def get_http_header(host, port):
             "Accept-Encoding: gzip, deflate, br\r\n"  # 允许压缩响应
             "Connection: close\r\n\r\n"
         )
-        sock.sendall(request.encode())
 
         # 接收响应
         response = b""
@@ -75,58 +105,10 @@ def get_http_header(host, port):
         response = response.decode('utf-8', errors='ignore')
         headers = response.split("\r\n\r\n")[0]  # 获取 HTTP 头部部分
         
-        return headers
+        return ("HTTPS", headers)
 
     except Exception as e:
-        return f"错误: {str(e)}"
-
-def get_ssh_banner(host, port=22):
-    """获取 SSH 端口的 Banner 信息"""
-    try:
-        # 创建 socket 连接
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5)
-
-        # 连接到目标端口
-        sock.connect((host, port))
-
-        # 读取 SSH Banner
-        banner = sock.recv(1024).decode('utf-8', errors='ignore')
-
-        # 关闭连接
-        sock.close()
-
-        if banner.startswith("SSH-"):
-            return banner.strip()
-        return "无法识别的 SSH 服务"
-
-    except Exception as e:
-        return f"无法获取 SSH 信息: {str(e)}"
-
-
-def scan_port_with_nmap(host, port):
-    """使用 nmap 获取端口的详细信息"""
-    nm = nmap.PortScanner()
-    # service_info = {}
-
-    nm.scan(ip, str(port), arguments='-sV --script ssl-enum-ciphers')
-
-    for host in nm.all_hosts():
-        lport = nm[host]['tcp'].keys()
-        for port in lport:
-            if nm[host]['tcp'][port]['state'] == 'open':
-                service = nm[host]['tcp'][port]['name']
-                additional_info = nm[host]['tcp'][port].get('extrainfo')
-
-                # 如果服务是 http/https，尝试获取 HTTP 头信息
-                if service in ['http', 'http-proxy', 'https']:
-                    additional_info = get_http_header(host, port)
-
-                # 处理 SSH 服务的特殊端口
-                if port == 'ssh':
-                    additional_info = get_ssh_banner(host, port)
-
-    return service, additional_info
+        return f"未知", str(e)
 
 def scan_port(host, port, original_host):
     """扫描单个端口"""
@@ -139,22 +121,12 @@ def scan_port(host, port, original_host):
         service = None
         additional_info = None
         if not service:
-            service = get_service_name(port)
-            if not service:
-                service, additional_info = scan_port_with_nmap(host, port)
+            service, additional_info = scan_service_banner(host, port)
+            if service == "未知" or additional_info == "" or additional_info == None:
+                # 尝试使用 HTTPS 请求获取更多信息
+                service, additional_info = get_http_header(host, port)
                 if not service:
-                    iana_info = get_iana_service_name(port)
-                    if iana_info:
-                        service = iana_info
-                    else:
-                        service = "未知"
-                        
-        if service in ['http', 'https']:
-            # 使用原始域名而非 IP 地址
-            additional_info = get_http_header(original_host, port)
-
-        elif service == 'ssh':
-            additional_info = get_ssh_banner(host, port)
+                    service = "未知"
             
         return port, service, additional_info
     sock.close()
@@ -185,12 +157,6 @@ def scan_ports(host, original_host, start_port=1, end_port=1024, max_threads=100
 
     print("\n扫描完成。")
     return open_ports
-
-def save_to_file(open_ports, filename="port_scan_results.txt"):
-    """保存扫描结果到文件"""
-    with open(filename, "a") as file:
-        for port, service in open_ports:
-            file.write(f"--端口 {port} 已打开 - {service}\n")
 
 def display_results(open_ports):
     """显示扫描结果并解释端口作用"""
@@ -232,3 +198,28 @@ if __name__ == "__main__":
         sys.exit(1)
     open_ports = scan_ports(ip, host, start_port, end_port, max_threads)
     display_results(open_ports)
+
+
+
+def service_scan_http(ip: str, ports: list[int]) -> list[dict[str, int | str]]:
+    return [
+        {"port": 80, "banner": "HTTP/1.1 200 OK", "protocol": "HTTP"},
+        {"port": 8080, "banner": "HTTP/1.1 200 OK", "protocol": "HTTP"},
+    ]
+
+
+def service_scan_https(ip: str, ports: list[int]) -> list[dict[str, int | str]]:
+    return [{"port": 443, "banner": "HTTP/1.1 200 OK", "protocol": "HTTPS"}]
+
+
+def service_scan_ssh(ip: str, ports: list[int]) -> list[dict[str, int | str]]:
+    return [{"port": 22, "banner": "SSH-2.0-OpenSSH_7.9", "protocol": "SSH"}]
+
+
+def service_scan(ip: str, ports: list[int]) -> list[dict[str, int | str]]:
+    raise Exception("Not implemented")
+    return list(
+        service_scan_http(ip, ports)
+        + service_scan_https(ip, ports)
+        + service_scan_ssh(ip, ports)
+    )

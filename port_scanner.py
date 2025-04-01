@@ -136,7 +136,7 @@ def scan_ports(host, original_host, start_port=1, end_port=1024, max_threads=100
     """多线程扫描端口"""
     open_ports = []
     get_open_ports = get_ports(host)
-    total_ports = len(open_ports)
+    total_ports = len(get_open_ports)
     scanned_ports = 0
 
     with ThreadPoolExecutor(max_workers=max_threads) as executor:

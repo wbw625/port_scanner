@@ -47,7 +47,7 @@ def get_ports(input_str):
         return []
     else:
         print(f"IP: {ip}")
-    open_ports = open_ports_method1(ip) + open_ports_method2(ip)
+    open_ports = list(set(open_ports_method1(ip)) | set(open_ports_method2(ip)))
     return open_ports
 
 if __name__ == "__main__":

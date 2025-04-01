@@ -59,7 +59,6 @@ def scan_service_banner(ip: str, port: int) -> dict[int, str]:
         else:
             service = "未知"
 
-        print(f"端口 {port} ({service}): {service_banner}")
     return (service, service_banner)
 
 
@@ -70,12 +69,11 @@ def get_http_header(host, port):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(20)
 
-        # 使用 SSL/TLS 包装 socket
         context = ssl.create_default_context()
         context.check_hostname = False  # 禁用主机名检查
         context.verify_mode = ssl.CERT_NONE  # 禁用证书验证
         sock = context.wrap_socket(sock, server_hostname=host)
-        
+
         # 连接到目标主机和端口
         sock.connect((host, port))
 
@@ -89,6 +87,7 @@ def get_http_header(host, port):
             "Accept-Encoding: gzip, deflate, br\r\n"  # 允许压缩响应
             "Connection: close\r\n\r\n"
         )
+        sock.sendall(request.encode())
 
         # 接收响应
         response = b""
@@ -108,7 +107,34 @@ def get_http_header(host, port):
         return ("HTTPS", headers)
 
     except Exception as e:
-        return f"未知", str(e)
+        """发送 HTTP 请求并返回响应头"""
+        try:
+            # 创建一个 socket 连接
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(20)
+
+            sock.connect((host, port))
+ 
+            request = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+            
+            sock.sendall(request.encode())
+
+            response = b""
+            while True:
+                data = sock.recv(1024)
+                if not data:
+                    break
+                response += data
+
+            sock.close()
+
+            response = response.decode('utf-8', errors='ignore')
+            headers = response.split("\r\n\r\n")[0]  # 获取 HTTP 头部部分
+            
+            return ("HTTP", headers)
+
+        except Exception as e:
+            return ("未知", str(e))
 
 def scan_port(host, port, original_host):
     """扫描单个端口"""

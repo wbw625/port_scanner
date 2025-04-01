@@ -48,18 +48,40 @@ def socket_get_banner(host, port):
     except Exception as e:
         return f"错误: {str(e)}"
 
-def scan_service_banner(ip: str, port: int) -> dict[int, str]:
-    """扫描指定 IP 地址的端口并返回结果"""
+def scan_service_banner(ip: str, port: int) -> dict[str, str]:
+    # 扫描指定 IP 地址的端口并返回服务和 Banner 信息
     service_banner = socket_get_banner(ip, port)
-    if service_banner:
-        if service_banner.startswith("SSH-"):
-            service = "SSH"
-        elif service_banner.startswith("220"):
-            service = "SMTP"
-        else:
-            service = "未知"
 
-    return (service, service_banner)
+    if not service_banner:
+        return "未知", ""
+
+    # 匹配常见服务
+    service = "未知"
+    service_keywords = {
+        "SSH-": "SSH",
+        "220": "SMTP",
+        "220-": "FTP",
+        "MySQL": "MySQL",
+        "PostgreSQL": "PostgreSQL",
+        "Redis": "Redis",
+        "Elasticsearch": "Elasticsearch",
+        "Memcached": "Memcached",
+        "MongoDB": "MongoDB",
+        "IMAP": "IMAP",
+        "POP3": "POP3",
+        "SMB": "SMB",
+        "VNC": "VNC",
+        "RDP": "RDP",
+        "LDAP": "LDAP",
+    }
+
+    # 关键字匹配服务
+    for keyword, srv in service_keywords.items():
+        if keyword in service_banner:
+            service = srv
+            break
+
+    return service, service_banner
 
 
 def get_http_header(host, port):

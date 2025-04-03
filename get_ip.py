@@ -1,3 +1,5 @@
+# get_ip.py
+
 import ipaddress
 import socket
 import re
@@ -8,7 +10,8 @@ def is_ip(input_str):
         return True
     except ValueError:
         return False
-    
+
+
 def is_domain(input_str):
     domain_pattern = r'^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
     return re.fullmatch(domain_pattern, input_str) is not None
@@ -34,6 +37,7 @@ def get_ip(input_str):
     print("无效的 IP 地址或域名。")
     ip = None
     return ip
+
 
 if __name__ == "__main__":
     input_str = input("请输入 IP 地址或域名: ")
